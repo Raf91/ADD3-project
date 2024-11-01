@@ -1,0 +1,196 @@
+---
+title: "Morphoregulatory ADD3 underlies glioblastoma growth and formation of tumor-tumor
+  connections"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+#  needed libraries
+library(VennDiagram)
+library(openxlsx)
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+```
+
+## Figure 2A
+### GBM morphoregulatory genes
+
+```{r echo=TRUE, warning=FALSE}
+tab_Bhaduri <- read.xlsx("~/ADD3_computable_paper/data/Bhaduri_GBM.xlsx")
+tab_Kalebic <- read.xlsx("~/ADD3_computable_paper/data/Morpho genes in bRG.xlsx",colNames = F)
+morpho_genes <- na.omit(unique(union(tab_Kalebic$X1, tab_Kalebic$X2)))
+gbm_genes <- unique(tab_Bhaduri$gene)
+
+grid.newpage()
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+
+MyVennDiagram <- venn.diagram(
+  x = list(
+    A = morpho_genes,
+    B = gbm_genes
+  ),
+  category.names = c("", ""),
+  main = "",
+  main.cex = NULL,
+  filename = NULL,
+  lwd = 1,
+  lty = "blank",
+  fill = c("cornflowerblue", "pink"),
+  alpha = 0.65,
+  label.col = "black",
+  cex = 1.5,
+  fontface = "bold",
+  fontfamily = "sans",
+  cat.cex = 1.8,
+  cat.fontface = "bold",
+  cat.fontfamily = "sans",
+  ext.text=FALSE,
+  scaled = FALSE,
+  cat.pos=c(0,0),
+
+)
+
+grid.draw(MyVennDiagram)
+```
+
+
+### Load and pre-preprocess CCLE expression data
+
+```{r echo=TRUE,warning=FALSE}
+
+download.file(
+  url="https://zenodo.org/records/14025440/files/CCLE_expression_final.RData?download=1",
+  destfile = "~/CCLE_expression_final.RData")
+
+load("~/CCLE_expression_final.RData") #from Broad 22Q2 version # from Broad 22Q2 version
+
+CMP_ANN <- read.csv("~/ADD3_computable_paper/data/model_list_depmap.csv")
+
+GBM_CMP <- CMP_ANN %>% 
+  filter(cancer_type == 'Glioblastoma') %>% 
+  dplyr::select(model_id, model_name, BROAD_ID, ploidy)
+
+rwn <- strsplit(colnames(expr), split="\\..")
+rwnl <- list()
+for (i in seq_len(ncol(expr))){rwnl[[i]] <- rwn[[i]][[1]]}
+rwn <- unlist(rwnl)
+df <- expr[match(GBM_CMP$BROAD_ID,rownames(expr)),]
+df <- df[complete.cases(df),]
+colnames(df) <- rwn
+rownames(df) <- GBM_CMP[which(rownames(df) %in% GBM_CMP$BROAD_ID),"model_name"]
+df <- df[,!duplicated(colnames(df))]
+df <- df[,which(colnames(df) %in% intersect(morpho_genes,gbm_genes))]
+```
+
+## Figure 2B
+
+### Morphoregulatory gene expression in GBM cell lines
+
+```{r echo=FALSE}
+
+# melt dataset to produce sorted boxplots
+df1 <- cbind.data.frame(df, "cell_line"=rownames(df))
+df1 <- melt(df1)
+ggplot(df1, aes(x=reorder(variable,value,median), y=value)) + 
+  geom_boxplot() +
+  theme_classic() +
+  theme(axis.text=element_text(size=10)) +
+  scale_x_discrete(guide = guide_axis(angle = 60)) +
+  labs(y= "log2(TPM+1)", x = "")
+```
+
+## Figure 2B (right)
+### Adducins densities
+
+```{r echo=FALSE}
+df2 <- as.data.frame(colMeans(df))
+df2 <- cbind.data.frame("genes"=rownames(df2),"values"=df2[,1])
+ggplot(df2, aes(x=values))+
+  geom_density(fill="darkgreen",alpha=0.5,color=NA)+
+  geom_vline(xintercept = df2[5,]$values,color="grey")+
+  geom_vline(xintercept = df2[21,]$values,color="grey")+
+  geom_vline(xintercept = df2[2,]$values,color="grey")+
+  xlim(-4,15)+
+  labs(x= "log2(TPM+1)", y= "density")+
+  theme_classic() +
+  theme(axis.text=element_text(size=10))
+```
+## Figure 2C
+### GBM dependencies
+
+```{r echo=FALSE}
+download.file(url="https://zenodo.org/records/14025440/files/Sanger_Broad_higQ_scaled_depFC.RData?download=1",
+  destfile = "~/Sanger_Broad_higQ_scaled_depFC.RData")
+
+load("~/Sanger_Broad_higQ_scaled_depFC.RData") 
+clannotation <- read.csv("~/ADD3_computable_paper/data/model_list_depmap.csv")
+FCs <- scaled_depFC[which(rownames(scaled_depFC) %in% intersect(morpho_genes,gbm_genes)),]
+
+gbm_ann <- clannotation %>% filter(cancer_type == "Glioblastoma")
+gbm_FCs <- FCs[,which(colnames(FCs) %in% gbm_ann$model_name)]
+reduced_genes <- names(sort(colMeans(df))[12:29])
+gbm_FCs_reduced <- gbm_FCs[which(rownames(gbm_FCs) %in% reduced_genes[c(-2,-4,-18)]),]
+sorted_avgFCs <- as.data.frame(sort(apply(gbm_FCs_reduced,1,mean)))
+sorted_avgFCs <- cbind.data.frame("depFC"=sorted_avgFCs[,1],"gene"=rownames(sorted_avgFCs))
+sorted_avgFCs <- sorted_avgFCs[order(sorted_avgFCs$depFC),]
+sorted_avgFCs$gene <- factor(sorted_avgFCs$gene, levels=sorted_avgFCs$gene)
+
+melted_FCs <- melt(gbm_FCs_reduced)
+avg <- tapply(melted_FCs$value, melted_FCs$Var1, mean)
+sorted <- names(sort(avg))
+melted_FCs$Var1 <- factor(melted_FCs$Var1, levels = sorted)
+
+ggplot(melted_FCs, aes(x=Var1,y=value)) + 
+  geom_violin(fill="blue")+
+  geom_boxplot(width = 0.2, fill = "white", color = "blue", outlier.shape = NA) +
+  theme_classic() +
+  theme(axis.text=element_text(size=10)) +
+  scale_x_discrete(guide = guide_axis(angle = 60)) +
+  labs(y= "depletion FCs", x = "")
+
+```
+
+## Figure S1A
+### Pan-cancer essential genes
+
+```{r echo=FALSE}
+load("~/ADD3_computable_paper/data/novelCFs_sets.RData")
+cf_genes <- intersect(colnames(df), (Reduce(union, novelCFs_sets)))
+df_melted <- melt(gbm_FCs[which(rownames(gbm_FCs) %in% cf_genes),])
+ggplot(df_melted, aes(x=value,fill=Var1))+
+  geom_density(alpha=0.5,color="black")+
+  facet_wrap(~factor(Var1),nrow=1,scales="free_x") +
+  coord_flip()+
+  labs(x= "depletion FC", y="density")+
+  theme_classic()+
+  xlim(-1.8,0.1)+
+  theme(legend.position = "none") +
+  theme(axis.text=element_text(size=10))+
+  scale_fill_viridis_d(option = "G", end = 0.8, direction = -1)
+```
+
+## Figure S1B
+### ADD3 essentiality across GBM cell lines
+
+```{r  echo=FALSE}
+add3_FCs <- as.data.frame(gbm_FCs["ADD3",])
+add3_FCs <- cbind.data.frame(add3_FCs[,1], rownames(add3_FCs))
+colnames(add3_FCs) <- c("depFC","cell_line")
+add3_FCs <- add3_FCs[order(add3_FCs$depFC),]
+add3_FCs$cell_line <- factor(add3_FCs$cell_line, levels=add3_FCs$cell_line)
+
+ggplot(add3_FCs, aes(x=sort(cell_line),y=depFC)) + 
+  geom_bar(stat="identity", fill="#F8766D") +
+  theme_classic() +
+  theme(axis.text=element_text(size=10)) +
+  scale_x_discrete(guide = guide_axis(angle = 60)) +
+  labs(y= "depletion FCs", x = "Cell line ID") 
+```
+
