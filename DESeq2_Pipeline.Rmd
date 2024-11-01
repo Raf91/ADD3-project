@@ -1,0 +1,297 @@
+---
+title: "Morphoregulatory ADD3 underlies glioblastoma growth and formation of tumor-tumor connections"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+# needed libraries
+library(dplyr)
+library(DESeq2)
+library(RColorBrewer)
+library(pheatmap)
+library(ggplot2)
+library(ggrepel)
+library(DT)
+library(scales)
+library(stringr)
+library(reshape2)
+library(ggpubr)
+library(openxlsx)
+```
+
+### Data loading and pre-processing
+
+```{r echo=TRUE, warning=FALSE}
+# read the STAR counts and assemble a readcount matrix 
+# read raw data
+path_to_counts <-"~/ADD3_computable_paper/data/salmon_merged_counts.csv"
+raw <- read.csv(file=path_to_counts, header=T, row.names=1, stringsAsFactors=F)
+
+# read samplesheet (all samples)
+sampleinfo <- data.frame(
+  "SAMPLE_NAME"=c(
+    "Sample_12",
+    "Sample_11",
+    "Sample_22",
+    "Sample_31",
+    "Sample_41",
+    "Sample_42"
+    ),
+  "GF_ID"=c(
+    "CBA_001",
+    "CBA_002",
+    "CBA_004",
+    "CBA_005",
+    "CBA_007",
+    "CBA_008"
+    ),
+  "SAMPLE_TYPE"=c(
+    "add3++",
+    "ctrl",
+    "add3++",
+    "ctrl",
+    "ctrl",
+    "add3++"
+    ),
+  stringsAsFactors = TRUE
+)
+
+# remove samples that do not reach the threshold
+gnames <- rownames(raw)
+raw <- apply(raw,2,as.integer)
+rownames(raw) <- gnames
+sampleNames <- colnames(raw)
+
+# create DESeq objects
+
+dds <- DESeqDataSetFromMatrix(countData = raw, colData = sampleinfo, design = ~ SAMPLE_TYPE)
+dds <- dds[rowSums(counts(dds)) > 1, ]
+dds <- estimateSizeFactors(dds)
+readcounts_norm <- as.data.frame(counts(dds, normalized = TRUE))
+sizeFactors(dds)
+```
+
+### Exploratory analysis
+
+```{r, echo=TRUE}
+# transformations
+rld <- rlog(dds, blind=T)
+
+# compute sample distances 
+sampleDists <- dist(t(assay(rld)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- sampleNames
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette(rev(brewer.pal(9, "Oranges")))(255)
+
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors, cellwidth = 30, cellheight = 30)
+```
+
+```{r, echo=TRUE}
+# Visualize samples using PCA
+plotPCA(rld, intgroup=c("SAMPLE_TYPE")) +
+  geom_text_repel(aes(label = rld@colData@rownames))
+```
+
+```{r, echo=TRUE}
+# Differential expression analysis
+dds <- DESeq(dds)
+contrast <- c("add3++", "ctrl") 
+phenoData <- colData(dds)
+phenoData <- phenoData[phenoData$SAMPLE_TYPE %in% contrast,]
+contrast_samples_ordered <- rownames(phenoData[order(phenoData$SAMPLE_TYPE),])
+
+# define cut-offs
+fcT <- 0.5
+fdr <- 0.05
+
+# extract results
+res <- results(dds, contrast=c("SAMPLE_TYPE",contrast), alpha = fdr, pAdjustMethod="BH")
+```
+
+```{r, echo=TRUE}
+# retrieve plot labels
+res <- as.data.frame(res)
+res <- res %>% mutate(
+  type = case_when(
+    abs(log2FoldChange) >= 0.5 & padj <= 0.05 ~ "adj.pVal<0.05 & |LogFC|>0.5",
+    TRUE ~ "other"
+  ),
+  HUGO = rownames(res)
+)
+
+ggplot(data=res,aes(x=log2FoldChange, y = -log10(pvalue), color=factor(type))) +
+  geom_point(size = 2) +
+  xlim(-8,10) +
+  geom_text_repel(
+    data = subset(res, abs(log2FoldChange) > 0.5 & padj <= 0.05),
+            aes(label = HUGO), hjust = 0, vjust = 0, max.overlaps = 22) +  
+  labs(x = "Log2 Fold Change", y = "-log10(p-value)",title = NULL) +
+  geom_vline(xintercept = c(-0.5,0.5), linetype = "dashed", color = "grey")+
+  theme_classic()
+
+```
+
+
+```{r, echo=TRUE}
+resSubset <- subset(res, padj<fdr & abs(log2FoldChange)>fcT)
+resSubset <- resSubset[order(resSubset$log2FoldChange, decreasing = TRUE),]
+summary(resSubset)
+```
+
+## Figure 6A
+
+### Heatmaps of top differentially expressed genes (FoldChange > 0.5, adj.pVal< 0.05)
+
+```{r, echo=TRUE}
+
+genesSelected <- rownames(resSubset)
+heatData <- assay(rld)[genesSelected, ]
+
+scaled <- scale(t(heatData))
+scaled <- t(scaled)
+
+my_sample_col <- sampleinfo[,c(2,3)]
+
+my_sample_row <- data.frame(
+  row.names = rownames(heatData),
+  category = factor(rep(c("upregulated", "downregulated"), c(10, 7))))
+
+names(my_sample_col) <- c("sample","type")
+rownames(my_sample_col) <- sampleinfo$GF_ID
+my_sample_col$names <- NULL
+my_sample_col$sample <- NULL
+
+
+pheatmap(
+  scaled, 
+  annotation_row = my_sample_row,
+  annotation_col = my_sample_col, 
+  cellwidth = 10, 
+  cluster_rows=F, 
+  cluster_cols=T, 
+  show_rownames=T, 
+  main = "")
+
+
+```
+
+### Table of Differential expressed genes 
+
+```{r, echo=TRUE}
+# Tables
+# Table of DE genes
+resSubsetDF <- as.data.frame(resSubset)
+resSubsetDF$ensembl_gene_id_version <- rownames(resSubsetDF)
+resSubsetDF$log2FoldChange <- round(resSubsetDF$log2FoldChange, digit = 3)
+resSubsetDF$pvalue <- scientific(resSubsetDF$pvalue, digit = 6)
+resSubsetDF$padj <- scientific(resSubsetDF$padj, digit = 6)
+
+ensid <- as.data.frame(str_split_fixed(resSubsetDF$ensembl_gene_id_version, "\\.", 2))
+colnames(ensid) <- c("ensembl_gene_id", "version")
+ensid$version <- NULL
+resSubsetDF <- cbind(resSubsetDF, ensid)
+resSubset
+```
+
+## Figure S8
+### Differential gene expression upon ADD3 OE correlates with basal expression patterns in relation to ADD3
+
+
+```{r, echo=TRUE}
+tab_Bhaduri <- read.xlsx("~/ADD3_computable_paper/data/Bhaduri_GBM.xlsx")
+tab_Kalebic <- read.xlsx("~/ADD3_computable_paper/data/Morpho genes in bRG.xlsx",colNames = F)
+morpho_genes <- na.omit(unique(union(tab_Kalebic$X1, tab_Kalebic$X2)))
+gbm_genes <- unique(tab_Bhaduri$gene)
+
+download.file(
+  url="https://zenodo.org/records/14025440/files/CCLE_expression_final.RData?download=1",
+  destfile = "~/CCLE_expression_final.RData")
+
+load("~/CCLE_expression_final.RData") #from Broad 22Q2 version
+CMP_ANN <- read.csv("~/ADD3_computable_paper/data/model_list_depmap.csv")
+GBM_CMP <- CMP_ANN %>% 
+  filter(cancer_type == 'Glioblastoma') %>% 
+  dplyr::select(model_id, model_name, BROAD_ID, ploidy)
+
+rwn <- strsplit(colnames(expr), split="\\..")
+rwnl <- list()
+for (i in seq_len(ncol(expr))){rwnl[[i]] <- rwn[[i]][[1]]}
+rwn <- unlist(rwnl)
+df <- expr[match(GBM_CMP$BROAD_ID,rownames(expr)),]
+df <- df[complete.cases(df),]
+colnames(df) <- rwn
+rownames(df) <- GBM_CMP[which(rownames(df) %in% GBM_CMP$BROAD_ID),"model_name"]
+df <- df[,!duplicated(colnames(df))]
+std <- apply(df, 2, sd, na.rm=T)
+filtered <- names(which(std >= as.numeric(quantile(std, 0.35))))
+df_filtered <- df %>% dplyr::select(all_of(filtered))
+scaled <- scale(df_filtered)
+
+cc <- cor(scaled)
+
+gc(full=T)
+
+cc_null <- cc[upper.tri(cc, diag=F)]
+
+upreg <- resSubsetDF %>% filter(log2FoldChange > 0.5) %>% rownames()
+downreg <- resSubsetDF %>% filter(log2FoldChange < -0.5) %>% rownames()
+
+df_deg <- data.frame(
+  "type"=c(
+    rep("null",length(cc_null)),
+    rep("upreg", 9),
+    rep("downreg",5)),
+  "values"=c(
+    cc_null, 
+    as.numeric(cc["ADD3", upreg[-1]]),
+    as.numeric(cc["ADD3", downreg[-c(4,5)]])),
+  stringsAsFactors = FALSE)
+
+cc_up <- as.numeric(cc["ADD3", upreg[-1]])
+cc_down <- as.numeric(cc["ADD3", downreg[-c(4,5)]])
+
+par(mar=c(6,5,2,2))
+boxplot(
+  cc_null, 
+  cc_up, 
+  cc_down,
+  horizontal=T, 
+  col=alpha(c("gray","red","blue"), 0.8),
+  xlab=NULL,
+  axes=FALSE)
+
+axis(1)
+axis(2, at=1:3,labels=FALSE)
+
+text(y=1:3,
+     par("usr")[3]-1.4,
+     xpd=NA,
+     labels=c("pair.wise null", "ADD3 vs Up", "ADD3 vs Down"),
+     adj=1,
+     srt=45,
+     cex=0.9)
+
+# Compute pair-wise t-test 
+
+pair0 <- t.test(cc_null, cc_down)
+pair1 <- t.test(cc_null, cc_up)
+pair2 <- t.test(cc_down, cc_up)
+
+pvalues <- c("null vs down"=pair0$p.value, 
+             "null vs up"=pair1$p.value, 
+             "down vs up"=pair2$p.value)
+
+print(round(pvalues,3))
+```
