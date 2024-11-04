@@ -63,7 +63,7 @@ grid.draw(MyVennDiagram)
 
 ### Load and pre-preprocess CCLE expression data
 
-```{r, echo=TRUE,warning=FALSE}
+```{r, echo=TRUE, warning=FALSE}
 
 download.file(
   url="https://zenodo.org/records/14025440/files/CCLE_expression_final.RData?download=1",
@@ -94,7 +94,6 @@ df <- df[,which(colnames(df) %in% intersect(morpho_genes,gbm_genes))]
 ### Morphoregulatory gene expression in GBM cell lines
 
 ```{r, echo=FALSE}
-
 # melt dataset to produce sorted boxplots
 df1 <- cbind.data.frame(df, "cell_line"=rownames(df))
 df1 <- melt(df1)

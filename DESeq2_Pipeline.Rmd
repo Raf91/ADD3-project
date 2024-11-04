@@ -32,39 +32,24 @@ library(openxlsx)
 ```{r, echo=TRUE, warning=FALSE}
 # read the STAR counts and assemble a readcount matrix 
 # read raw data
-path_to_counts <-"~/data/salmon_merged_counts.csv"
-raw <- read.csv(file=path_to_counts, header=T, row.names=1, stringsAsFactors=F)
+path_to_counts <-"~/data/salmon.merged.gene_counts.tsv"
+raw <- read.table(file = path_to_counts, header = T, sep = "\t", stringsAsFactors = F)
+rownames(raw) <- raw$gene_id
+raw$gene_id <- NULL
+raw$gene_name <- NULL
 
 # read samplesheet (all samples)
 sampleinfo <- data.frame(
-  "SAMPLE_NAME"=c(
-    "Sample_12",
-    "Sample_11",
-    "Sample_22",
-    "Sample_31",
-    "Sample_41",
-    "Sample_42"
-    ),
-  "GF_ID"=c(
-    "CBA_001",
-    "CBA_002",
-    "CBA_004",
-    "CBA_005",
-    "CBA_007",
-    "CBA_008"
-    ),
-  "SAMPLE_TYPE"=c(
-    "add3++",
-    "ctrl",
-    "add3++",
-    "ctrl",
-    "ctrl",
-    "add3++"
-    ),
+  "SAMPLE_NAME"=c("Sample_12","Sample_11","Sample_21","Sample_22","Sample_31","Sample_32","Sample_41","Sample_42","Sample_13","Sample_14"),
+  "GF_ID"=c("CBA_001","CBA_002","CBA_003","CBA_004","CBA_005","CBA_006","CBA_007","CBA_008","CBA_009","CBA_010"),
+  "SAMPLE_TYPE"=c("add3++","ctrl","ctrl","add3++","ctrl","add3++","ctrl","add3++","ctrl","add3++"),
   stringsAsFactors = TRUE
 )
 
-# remove samples that do not reach the threshold
+# remove samples that did not reach the threshold
+raw <- raw[,-c(3,6,9,10)]
+
+sampleinfo <- sampleinfo[which(sampleinfo$GF_ID %in% colnames(raw)),]
 gnames <- rownames(raw)
 raw <- apply(raw,2,as.integer)
 rownames(raw) <- gnames
